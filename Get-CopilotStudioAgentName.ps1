@@ -260,7 +260,6 @@ $matches = Find-AgentByGuidAcrossBotTextFields `
 
 if (-not $matches -or $matches.Count -eq 0) {
     LogWarn "No Copilot Studio agent found containing Entra Agent ID: $EntraAgentObjectId"
-    LogWarn "Given your screenshot shows a Schema name (e.g. auto_agent_O6u0h), an alternative is to query by SchemaName directly."
     LogInfo "=== Completed ==="
     return
 }
@@ -268,3 +267,4 @@ if (-not $matches -or $matches.Count -eq 0) {
 LogInfo "Match(es) found:"
 $matches | Sort-Object AgentName | Format-Table -AutoSize
 LogInfo "=== Completed ==="
+
