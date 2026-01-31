@@ -4,15 +4,15 @@
 
 .EXAMPLE
   .\Get-CopilotStudioAgentName.ps1 `
-    -EntraAgentObjectId "<Agent-Identity-Object-ID>" `
-    -EnvironmentUrl "https://<environment>.crm4.dynamics.com"
+    -EntraAgentObjectId "e40962b4-7abc-42e6-9882-9a08ef0e0ccf" `
+    -EnvironmentUrl "https://blue16.crm4.dynamics.com"
 
 .NOTES
   Environment ID: Default-82d2b6a0-7115-44c1-a787-4e01392b852a (not required for this script)
 #>
 
 param(
-    [Parameter(Mandatory)]
+    [Parameter(Mandatory=$false)]
     [ValidatePattern('^[0-9a-fA-F-]{36}$')]
     [string] $EntraAgentObjectId,
 
@@ -29,6 +29,15 @@ param(
     [ValidateRange(5,60)]
     [int] $AttributeChunkSize = 25
 )
+
+if ([string]::IsNullOrWhiteSpace($EntraAgentObjectId)) {
+    $EntraAgentObjectId = Read-Host "Enter Entra Agent Identity Object ID (GUID)"
+}
+
+if ($EntraAgentObjectId -notmatch '^[0-9a-fA-F-]{36}$') {
+    throw "Invalid GUID format for EntraAgentObjectId: '$EntraAgentObjectId'"
+}
+
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
@@ -267,4 +276,3 @@ if (-not $matches -or $matches.Count -eq 0) {
 LogInfo "Match(es) found:"
 $matches | Sort-Object AgentName | Format-Table -AutoSize
 LogInfo "=== Completed ==="
-
