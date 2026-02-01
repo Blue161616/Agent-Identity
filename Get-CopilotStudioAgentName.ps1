@@ -4,8 +4,8 @@
 
 .EXAMPLE
   .\Get-CopilotStudioAgentName.ps1 `
-    -EntraAgentObjectId "e40962b4-7abc-42e6-9882-9a08ef0e0ccf" `
-    -EnvironmentUrl "https://blue16.crm4.dynamics.com"
+    -EntraAgentObjectId "<Entra-Agent-Object-ID>" `
+    -EnvironmentUrl "https://<PowerPlatformEnvironment>.crm4.dynamics.com"
 
 .NOTES
   Environment ID: Default-82d2b6a0-7115-44c1-a787-4e01392b852a (not required for this script)
@@ -276,3 +276,4 @@ if (-not $matches -or $matches.Count -eq 0) {
 LogInfo "Match(es) found:"
 $matches | Sort-Object AgentName | Format-Table -AutoSize
 LogInfo "=== Completed ==="
+
