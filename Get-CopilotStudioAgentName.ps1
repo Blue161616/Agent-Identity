@@ -18,9 +18,9 @@ param(
     [ValidatePattern('^https://.+$')]
     [string] $EnvironmentUrl,
 
-    [Parameter()]
+    [Parameter(Mandatory)]
     [ValidatePattern('^[0-9a-fA-F-]{36}$')]
-    [string] $TenantId =,
+    [string] $TenantId,
 
     # How many attributes to fetch per request (avoids overly long URLs)
     [Parameter()]
@@ -274,6 +274,7 @@ if (-not $matches -or $matches.Count -eq 0) {
 LogInfo "Match(es) found:"
 $matches | Sort-Object AgentName | Format-Table -AutoSize
 LogInfo "=== Completed ==="
+
 
 
 
