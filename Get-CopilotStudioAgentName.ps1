@@ -7,7 +7,6 @@
     -EntraAgentObjectId "<Entra-Agent-Object-ID>" `
     -EnvironmentUrl "https://<PowerPlatformEnvironment>.crm4.dynamics.com"
     -TenantId "Tenant-Id"
-
 #>
 
 param(
@@ -275,5 +274,6 @@ if (-not $matches -or $matches.Count -eq 0) {
 LogInfo "Match(es) found:"
 $matches | Sort-Object AgentName | Format-Table -AutoSize
 LogInfo "=== Completed ==="
+
 
 
