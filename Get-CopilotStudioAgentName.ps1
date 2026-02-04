@@ -6,9 +6,8 @@
   .\Get-CopilotStudioAgentName.ps1 `
     -EntraAgentObjectId "<Entra-Agent-Object-ID>" `
     -EnvironmentUrl "https://<PowerPlatformEnvironment>.crm4.dynamics.com"
+    -TenantId "Tenant-Id"
 
-.NOTES
-  Environment ID: Default-82d2b6a0-7115-44c1-a787-4e01392b852a (not required for this script)
 #>
 
 param(
@@ -22,7 +21,7 @@ param(
 
     [Parameter()]
     [ValidatePattern('^[0-9a-fA-F-]{36}$')]
-    [string] $TenantId = "82d2b6a0-7115-44c1-a787-4e01392b852a",
+    [string] $TenantId =,
 
     # How many attributes to fetch per request (avoids overly long URLs)
     [Parameter()]
@@ -276,4 +275,5 @@ if (-not $matches -or $matches.Count -eq 0) {
 LogInfo "Match(es) found:"
 $matches | Sort-Object AgentName | Format-Table -AutoSize
 LogInfo "=== Completed ==="
+
 
