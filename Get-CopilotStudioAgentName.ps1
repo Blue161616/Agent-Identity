@@ -1,17 +1,16 @@
 <#
 .SYNOPSIS
-  Find Copilot Studio agent name by Entra Agent ID (GUID) by scanning ALL text fields of Dataverse bot table.
+  Find Copilot Studio agent name by Entra Agent ID (GUID) - searches ALL fields.
 
 .EXAMPLE
   .\Get-CopilotStudioAgentName.ps1 `
     -EntraAgentObjectId "<Entra-Agent-Object-ID>" `
-    -EnvironmentUrl "https://<PowerPlatformEnvironment>.crm4.dynamics.com"
+    -EnvironmentUrl "https://<PowerPlatformEnvironment>.crm4.dynamics.com" `
     -TenantId "Tenant-Id"
 #>
 
 param(
     [Parameter(Mandatory=$false)]
-    [ValidatePattern('^[0-9a-fA-F-]{36}$')]
     [string] $EntraAgentObjectId,
 
     [Parameter(Mandatory)]
@@ -22,10 +21,8 @@ param(
     [ValidatePattern('^[0-9a-fA-F-]{36}$')]
     [string] $TenantId,
 
-    # How many attributes to fetch per request (avoids overly long URLs)
     [Parameter()]
-    [ValidateRange(5,60)]
-    [int] $AttributeChunkSize = 25
+    [switch] $VerboseLogging
 )
 
 if ([string]::IsNullOrWhiteSpace($EntraAgentObjectId)) {
@@ -36,16 +33,25 @@ if ($EntraAgentObjectId -notmatch '^[0-9a-fA-F-]{36}$') {
     throw "Invalid GUID format for EntraAgentObjectId: '$EntraAgentObjectId'"
 }
 
-
-Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function LogInfo($msg) { Write-Host ("[{0}] [Info] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg) }
-function LogWarn($msg) { Write-Host ("[{0}] [Warn] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg) -ForegroundColor Yellow }
-function LogErr ($msg) { Write-Host ("[{0}] [Error] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg) -ForegroundColor Red }
+function LogInfo($msg) { 
+    Write-Host ("[{0}] [Info] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg) 
+}
+
+function LogWarn($msg) { 
+    Write-Host ("[{0}] [Warn] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg) -ForegroundColor Yellow 
+}
+
+function LogVerbose($msg) {
+    if ($VerboseLogging) {
+        Write-Host ("[{0}] [Verbose] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $msg) -ForegroundColor Cyan
+    }
+}
 
 function Ensure-Module {
     param([Parameter(Mandatory)][string]$Name)
+    
     if (-not (Get-Module -ListAvailable -Name $Name)) {
         LogInfo "Module '$Name' not found. Installing from PSGallery..."
         Install-Module $Name -Scope CurrentUser -Force
@@ -60,8 +66,6 @@ function Get-DataverseToken {
     )
 
     Ensure-Module -Name "MSAL.PS"
-
-    # Public client (Azure CLI). If blocked in your tenant, replace with your own app registration.
     $publicClientId = "04b07795-8ddb-461a-bbee-02f9e1bf7b46"
     $scope = "$EnvironmentUrl/.default"
 
@@ -83,14 +87,16 @@ function Invoke-DvGetPaged {
         "OData-Version"    = "4.0"
     }
 
-    $all  = New-Object System.Collections.Generic.List[object]
+    $results = New-Object System.Collections.ArrayList
     $next = $Url
 
     while ($next) {
         $resp = Invoke-RestMethod -Method GET -Uri $next -Headers $headers
-
-        if ($resp.value) { $resp.value | ForEach-Object { $all.Add($_) } }
-
+        if ($resp.value) { 
+            foreach ($item in $resp.value) {
+                [void]$results.Add($item)
+            }
+        }
         if ($resp.PSObject.Properties.Name -contains '@odata.nextLink') {
             $next = $resp.'@odata.nextLink'
         } else {
@@ -98,7 +104,7 @@ function Invoke-DvGetPaged {
         }
     }
 
-    return $all
+    return $results.ToArray()
 }
 
 function Get-BotTextAttributes {
@@ -108,173 +114,141 @@ function Get-BotTextAttributes {
     )
 
     $metaUrl = "$ApiBase/EntityDefinitions(LogicalName='bot')/Attributes?`$select=LogicalName,AttributeType"
-
-    LogInfo "Reading bot table metadata to discover text fields..."
+    LogInfo "Reading bot table metadata..."
     $attrs = Invoke-DvGetPaged -AccessToken $AccessToken -Url $metaUrl
 
     $textTypes = @("String","Memo")
-    $textAttrs = $attrs |
-        Where-Object { $textTypes -contains $_.AttributeType } |
-        Select-Object -ExpandProperty LogicalName
+    $textAttrs = $attrs | Where-Object { $textTypes -contains $_.AttributeType } | Select-Object -ExpandProperty LogicalName
 
-    # Remove common non-selectable / pseudo fields if they somehow appear
     $blacklistExact = @(
         "createdbyname","modifiedbyname","owningusername","owningteamname",
         "createdonbehalfbyname","modifiedonbehalfbyname"
     )
 
-    $textAttrs = $textAttrs |
-        Where-Object {
-            ($_ -notin $blacklistExact) -and
-            ($_ -notmatch 'name$' -or $_ -in @("name","schemaname")) # keep real name columns
-        }
+    $filteredAttrs = $textAttrs | Where-Object {
+        ($_ -notin $blacklistExact) -and
+        ($_ -notmatch 'name$' -or $_ -in @("name","schemaname"))
+    }
 
-    # Always include core fields
     $mandatory = @("botid","name","schemaname")
-    $textAttrs = ($mandatory + ($textAttrs | Where-Object { $mandatory -notcontains $_ })) | Select-Object -Unique
-
-    LogInfo ("Discovered {0} selectable text fields on bot table." -f ($textAttrs.Count))
-    return ,$textAttrs
-}
-
-
-function Chunk-Array {
-    param(
-        [Parameter(Mandatory)][object[]]$Items,
-        [Parameter(Mandatory)][int]$Size
-    )
-
-    for ($i = 0; $i -lt $Items.Count; $i += $Size) {
-        $Items[$i..([Math]::Min($i + $Size - 1, $Items.Count - 1))]
-    }
-}
-
-function Find-AgentByGuidAcrossBotTextFields {
-    param(
-        [Parameter(Mandatory)][string]$AccessToken,
-        [Parameter(Mandatory)][string]$ApiBase,
-        [Parameter(Mandatory)][string]$GuidText,
-        [Parameter(Mandatory)][string[]]$TextAttributes,
-        [Parameter(Mandatory)][int]$ChunkSize
-    )
-
-    $found = @()
-
-    # Always fetch these so output never breaks
-    $core = @("botid","name","schemaname")
-
-    # Make sure we don't chunk the core fields (they'll be added to every select anyway)
-    $scanAttrs = $TextAttributes | Where-Object { $core -notcontains $_ } | Select-Object -Unique
-
-    $chunks = @(Chunk-Array -Items $scanAttrs -Size $ChunkSize)
-
-    for ($chunkIndex = 0; $chunkIndex -lt $chunks.Count; $chunkIndex++) {
-        $chunk = @($chunks[$chunkIndex])
-
-        $retry = $true
-        while ($retry) {
-            $retry = $false
-
-            # Build a safe select list: core + chunk
-            $selectFields = @($core + $chunk) | Select-Object -Unique
-            $select = ($selectFields -join ",")
-            $url = "$ApiBase/bots?`$select=$select&`$top=5000"
-
-            LogInfo ("Fetching bot records (chunk {0}/{1})..." -f ($chunkIndex + 1), $chunks.Count)
-
-            try {
-                $bots = Invoke-DvGetPaged -AccessToken $AccessToken -Url $url
-            }
-            catch {
-                $msg = $_.Exception.Message
-
-                # Parse: "Could not find a property named 'X' on type 'Microsoft.Dynamics.CRM.bot'."
-                if ($msg -match "Could not find a property named\s+'([^']+)'") {
-                    $badField = $Matches[1]
-                    LogWarn "Dataverse rejected field '$badField' in `$select. Removing it and retrying this chunk..."
-
-                    # Never remove the core fields
-                    if ($core -contains $badField) {
-                        throw "Dataverse rejected required core field '$badField'. Something is off with the bot entity schema."
-                    }
-
-                    $chunk = $chunk | Where-Object { $_ -ne $badField }
-
-                    # Re-run same chunk without the bad field
-                    $retry = $true
-                    continue
-                }
-
-                throw
-            }
-
-            foreach ($b in $bots) {
-
-                foreach ($field in $chunk) {
-                    if (-not ($b.PSObject.Properties.Name -contains $field)) { continue }
-
-                    $val = $b.$field
-                    if ($null -eq $val) { continue }
-
-                    $text = if ($val -is [string]) { $val } else { ($val | Out-String) }
-
-                    if ($text -match [regex]::Escape($GuidText)) {
-                        # Safe reads (but core fields should always be present now)
-                        $agentName  = if ($b.PSObject.Properties.Name -contains "name") { $b.name } else { "<missing>" }
-                        $schemaName = if ($b.PSObject.Properties.Name -contains "schemaname") { $b.schemaname } else { "<missing>" }
-                        $botId      = if ($b.PSObject.Properties.Name -contains "botid") { $b.botid } else { "<missing>" }
-
-                        $found += [pscustomobject]@{
-                            AgentName  = $agentName
-                            SchemaName = $schemaName
-                            BotId      = $botId
-                            FoundIn    = $field
-                        }
-                        break
-                    }
-                }
-
-                if ($found.Count -gt 0) { break }
-            }
-
-            if ($found.Count -gt 0) { break }
-        }
-
-        if ($found.Count -gt 0) { break }
+    $allAttrs = New-Object System.Collections.ArrayList
+    
+    foreach ($m in $mandatory) { [void]$allAttrs.Add($m) }
+    foreach ($attr in $filteredAttrs) {
+        if ($attr -notin $mandatory) { [void]$allAttrs.Add($attr) }
     }
 
-    return $found
+    LogInfo "Discovered $($allAttrs.Count) text fields"
+    LogVerbose "Fields: $($allAttrs -join ', ')"
+    
+    return $allAttrs.ToArray()
 }
 
+# ===============================
+# MAIN EXECUTION
+# ===============================
 
-
-# ---- MAIN ----
-LogInfo "=== Starting Copilot Studio Agent Name Retrieval ==="
+LogInfo "=== Starting Copilot Studio Agent Search ==="
 LogInfo "Entra Agent ID: $EntraAgentObjectId"
 LogInfo "Environment URL: $EnvironmentUrl"
 
-$token  = Get-DataverseToken -TenantId $TenantId -EnvironmentUrl $EnvironmentUrl
+$token = Get-DataverseToken -TenantId $TenantId -EnvironmentUrl $EnvironmentUrl
 $apiBase = "$EnvironmentUrl/api/data/v9.2"
 
 $textAttrs = Get-BotTextAttributes -AccessToken $token -ApiBase $apiBase
 
-$matches = Find-AgentByGuidAcrossBotTextFields `
-    -AccessToken $token `
-    -ApiBase $apiBase `
-    -GuidText $EntraAgentObjectId `
-    -TextAttributes $textAttrs `
-    -ChunkSize $AttributeChunkSize
+# Create search variants
+$searchVariants = @(
+    $EntraAgentObjectId.ToLower(),
+    $EntraAgentObjectId.ToUpper(),
+    $EntraAgentObjectId.Replace("-", "").ToLower(),
+    $EntraAgentObjectId.Replace("-", "").ToUpper()
+) | Select-Object -Unique
 
-if (-not $matches -or $matches.Count -eq 0) {
-    LogWarn "No Copilot Studio agent found containing Entra Agent ID: $EntraAgentObjectId"
-    LogInfo "=== Completed ==="
-    return
+LogInfo "Search variants: $($searchVariants -join ', ')"
+
+# Fetch ALL bots with ALL text fields
+$selectFields = $textAttrs -join ","
+$url = "$apiBase/bots?`$select=$selectFields&`$top=5000"
+
+LogInfo "Fetching all bot records with all text fields..."
+$bots = Invoke-DvGetPaged -AccessToken $token -Url $url
+LogInfo "Retrieved $($bots.Count) bot record(s)"
+
+# Search through ALL bots and ALL fields
+$found = New-Object System.Collections.ArrayList
+
+foreach ($bot in $bots) {
+    $botName = if ($bot.PSObject.Properties.Name -contains "name") { $bot.name } else { "<unnamed>" }
+    $schemaName = if ($bot.PSObject.Properties.Name -contains "schemaname") { $bot.schemaname } else { "<no schema>" }
+    
+    LogVerbose "Scanning bot: $botName (schema: $schemaName)"
+    
+    foreach ($field in $textAttrs) {
+        if (-not ($bot.PSObject.Properties.Name -contains $field)) { 
+            continue 
+        }
+
+        $val = $bot.$field
+        if ($null -eq $val) { 
+            continue 
+        }
+
+        $text = if ($val -is [string]) { $val } else { ($val | Out-String) }
+        
+        # Try all search variants
+        foreach ($variant in $searchVariants) {
+            if ($text -match [regex]::Escape($variant)) {
+                LogInfo "*** MATCH FOUND ***"
+                LogInfo "  Bot Name: $botName"
+                LogInfo "  Schema: $schemaName"
+                LogInfo "  Field: $field"
+                LogInfo "  Variant: $variant"
+                
+                if ($VerboseLogging -and $text.Length -le 500) {
+                    LogVerbose "  Field content: $text"
+                } elseif ($VerboseLogging) {
+                    LogVerbose "  Field content (first 500 chars): $($text.Substring(0, 500))..."
+                }
+                
+                $botId = if ($bot.PSObject.Properties.Name -contains "botid") { $bot.botid } else { "<missing>" }
+                
+                [void]$found.Add([pscustomobject]@{
+                    AgentName  = $botName
+                    SchemaName = $schemaName
+                    BotId      = $botId
+                    FoundIn    = $field
+                })
+                break
+            }
+        }
+        
+        if ($found.Count -gt 0) { break }
+    }
+    
+    if ($found.Count -gt 0) { break }
 }
 
-LogInfo "Match(es) found:"
-$matches | Sort-Object AgentName | Format-Table -AutoSize
-LogInfo "=== Completed ==="
-
-
-
-
+# Display results
+if ($found.Count -eq 0) {
+    LogWarn "No Copilot Studio agent found containing Entra Agent ID: $EntraAgentObjectId"
+    LogInfo ""
+    LogInfo "Troubleshooting suggestions:"
+    LogInfo "1. Verify the Entra Agent ID is correct in Copilot Studio Settings > Advanced"
+    LogInfo "2. The GUID might be stored in a non-text field (e.g., Lookup, GUID type)"
+    LogInfo "3. Try searching in the Copilot Studio portal directly"
+} else {
+    LogInfo ""
+    LogInfo "================================"
+    LogInfo "MATCH(ES) FOUND"
+    LogInfo "================================"
+    
+    foreach ($match in $found) {
+        Write-Host ""
+        Write-Host "Agent Name  : $($match.AgentName)" -ForegroundColor Green
+        Write-Host "Schema Name : $($match.SchemaName)" -ForegroundColor Green
+        Write-Host "Bot ID      : $($match.BotId)" -ForegroundColor Green
+        Write-Host "Found In    : $($match.FoundIn)" -ForegroundColor Green
+        Write-Host "--------------------------------"
+    }
+}
