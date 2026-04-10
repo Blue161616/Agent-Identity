@@ -1,0 +1,43 @@
+// RDP Brute Force - Source IP correlation across all machines
+// RDP = LogonType 10 (RemoteInteractive) or LogonType 3 from external IPs
+
+let BruteForceThreshold = 10;
+let TimeWindow = 1h;
+
+let BruteForce = SecurityEvent
+| where TimeGenerated > ago(TimeWindow)
+| where EventID == 4625
+| where LogonType in (10, 3)  // RDP and Network logons
+| where IpAddress !in ("127.0.0.1", "::1", "-", "")
+| where IpAddress !startswith "10."
+| where IpAddress !startswith "192.168."
+| where IpAddress !startswith "172."
+| summarize
+    FailedAttempts   = count(),
+    TargetAccounts   = make_set(TargetUserName),
+    AttackStart      = min(TimeGenerated),
+    AttackEnd        = max(TimeGenerated),
+    MachinesAttacked = make_set(Computer)
+    by IpAddress
+| where FailedAttempts >= BruteForceThreshold
+| extend
+    AccountsTargeted  = array_length(TargetAccounts),
+    MachineCount      = array_length(MachinesAttacked),
+    AttackDuration    = AttackEnd - AttackStart;
+
+BruteForce
+| extend AttacksAllThree = iff(MachineCount >= 3, "⚠️ YES - Coordinated Attack", 
+                           iff(MachineCount == 2, "⚡ Partial - 2 machines",
+                               "Single machine"))
+| project
+    IpAddress,
+    AttacksAllThree,
+    MachineCount,
+    MachinesAttacked,
+    FailedAttempts,
+    AccountsTargeted,
+    TargetAccounts,
+    AttackStart,
+    AttackEnd,
+    AttackDuration
+| order by MachineCount desc, FailedAttempts desc
