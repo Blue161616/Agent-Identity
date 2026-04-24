@@ -1,0 +1,19 @@
+AIAgentsInfo
+| summarize arg_max(Timestamp, *) by AIAgentId
+| where Platform == "Copilot Studio" and AgentStatus != "Deleted"
+| extend ModelNameHint = extract(@"modelNameHint:\s*([A-Za-z0-9_\-\.]+)", 1, RawAgentInfo)
+| extend HintLower = tolower(ModelNameHint)
+| extend Provider = case(
+    HintLower startswith "sonnet" or HintLower startswith "haiku" or HintLower startswith "opus", "Anthropic",
+    HintLower startswith "gpt" or HintLower startswith "o1" or HintLower startswith "o3", "OpenAI (Microsoft-hosted)",
+    isempty(ModelNameHint), "Environment default",
+    "Other"
+  )
+| extend EUDB_Status = case(
+    Provider == "Anthropic", "OUT OF EUDB — cross-geo processing",
+    Provider == "OpenAI (Microsoft-hosted)", "In EUDB (if environment is in EU)",
+    Provider == "Environment default", "Depends on tenant default — verify",
+    "Verify"
+  )
+| project AIAgentName, Provider, ModelNameHint, EUDB_Status, EnvironmentId, CreatorAccountUpn, OwnerAccountUpns, LastModifiedTime
+| sort by Provider asc, AIAgentName asc
