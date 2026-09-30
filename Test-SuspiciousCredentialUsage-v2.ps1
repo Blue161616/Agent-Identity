@@ -110,7 +110,9 @@ $state=[ordered]@{RunUtc=(Get-Date).ToUniversalTime().ToString('o');TenantId=$Te
 $state|ConvertTo-Json|Set-Content $StatePath
 
 # later UTC hour than credential-add
-$nowUtc=(Get-Date).ToUniversalTime();$addUtc=[datetime]$state.CredentialAddedUtc
+# Parse the stored 'o' timestamp as UTC (a bare [datetime] cast turns the Z-suffixed
+# string into LOCAL time, which breaks the same-hour comparison and skips the wait).
+$nowUtc=(Get-Date).ToUniversalTime();$addUtc=[datetime]::Parse($state.CredentialAddedUtc,$null,[System.Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
 if($nowUtc.ToString('yyyyMMddHH') -eq $addUtc.ToString('yyyyMMddHH')){
   $next=$addUtc.Date.AddHours($addUtc.Hour+1);$wait=$next-$nowUtc
   if($wait.TotalSeconds -gt 0 -and $wait.TotalMinutes -le 65){Write-Warn2 ("Waiting {0:N0} min to cross into a later UTC hour (PG timing)." -f $wait.TotalMinutes);Start-Sleep -Seconds ([int]$wait.TotalSeconds+5)}
