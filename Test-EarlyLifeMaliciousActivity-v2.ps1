@@ -192,7 +192,7 @@ for ($r=1; $r -le $Rounds; $r++) {
     Write-Info "Round $r/$Rounds  ($(Get-Date -Format HH:mm))"
     # refresh token each round (also natural, benign sign-ins)
     try { $tok = Get-AgentToken -Bp $BlueprintAppId -Secret $ExistingSecret -AgentId $agentId } catch { Write-Warn2 "token refresh failed: $($_.Exception.Message)" }
-    foreach ($op in $envOps)     { Invoke-AgentRead -Category 'environment-mapping' -Label $op.L -Uri $op.U -Token $tok -Eventual:([bool]($op.E)) | Out-Null; Start-Sleep -Seconds 2 }
+    foreach ($op in $envOps)     { Invoke-AgentRead -Category 'environment-mapping' -Label $op.L -Uri $op.U -Token $tok -Eventual:([bool]($op['E'])) | Out-Null; Start-Sleep -Seconds 2 }
     foreach ($op in $postureOps) { Invoke-AgentRead -Category 'security-posture'    -Label $op.L -Uri $op.U -Token $tok | Out-Null; Start-Sleep -Seconds 2 }
     $script:Log | Export-Csv -Path $CallLogPath -NoTypeInformation -Encoding UTF8
     if ($r -lt $Rounds) { Write-Info "Sleeping ${RoundGapMinutes}m before next round..."; Start-Sleep -Seconds ($RoundGapMinutes*60) }
